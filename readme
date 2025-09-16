@@ -1,0 +1,99 @@
+# CloudWatch Service Quota Monitoring
+
+Monitor AWS service quota utilization and receive SNS notifications when thresholds are exceeded.
+
+## Prerequisites
+
+- AWS CLI configured with appropriate permissions
+- `jq` installed for JSON processing
+- Email access for SNS confirmations
+
+## Required IAM Permissions
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "sns:CreateTopic",
+                "sns:Subscribe",
+                "cloudwatch:PutMetricAlarm",
+                "service-quotas:ListServiceQuotas"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
+
+## Setup Options
+
+### Option 1: Automated Script
+
+```bash
+chmod +x quota-monitoring-setup.sh
+./quota-monitoring-setup.sh
+```
+
+**What it does:**
+- Creates SNS topic `quota-alerts`
+- Subscribes your email
+- Discovers EC2 quotas with usage metrics
+- Creates CloudWatch alarms at 80% threshold
+
+### Option 2: CloudFormation
+
+```bash
+aws cloudformation deploy \
+  --template-file cloudformation-quota-monitoring.yaml \
+  --stack-name quota-monitoring \
+  --parameter-overrides NotificationEmail=user@example.com
+```
+
+**Parameters:**
+- `NotificationEmail`: Email for alerts
+- `UtilizationThreshold`: Percentage threshold (default: 80)
+
+## Monitoring Details
+
+**Metric:** `AWS/Usage` namespace, `QuotaUtilization` metric
+
+**Dimensions:**
+- Service: AWS service code (e.g., EC2-VPC)
+- Type: Resource
+- Resource: Quota code
+
+**Alarm Configuration:**
+- Period: 5 minutes
+- Evaluation: 1 period
+- Statistic: Maximum
+- Threshold: 80% (configurable)
+
+## Adding Custom Quotas
+
+```bash
+aws cloudwatch put-metric-alarm \
+  --alarm-name "quota-s3-buckets" \
+  --metric-name "QuotaUtilization" \
+  --namespace "AWS/Usage" \
+  --statistic "Maximum" \
+  --period 300 \
+  --threshold 80 \
+  --comparison-operator "GreaterThanThreshold" \
+  --evaluation-periods 1 \
+  --alarm-actions "arn:aws:sns:region:account:quota-alerts" \
+  --dimensions Name=Service,Value=S3 Name=Type,Value=Resource Name=Resource,Value=Buckets
+```
+
+## Troubleshooting
+
+**No metrics available:** Not all quotas have usage metrics. Check with:
+```bash
+aws service-quotas list-service-quotas --service-code ec2 --query 'Quotas[?UsageMetric]'
+```
+
+**Email not received:** Check SNS subscription confirmation in email and confirm subscription.
+
+**Alarm not triggering:** Verify quota has usage metrics and current utilization exceeds threshold.
