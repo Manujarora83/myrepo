@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# Variables
+SNS_TOPIC_NAME="quota-alerts"
+ALARM_PREFIX="quota-utilization"
+THRESHOLD=80  # Alert at 80% utilization
+
+# Create SNS topic
+echo "Creating SNS topic..."
+TOPIC_ARN=$(aws sns create-topic --name $SNS_TOPIC_NAME --query 'TopicArn' --output text)
+echo "Topic ARN: $TOPIC_ARN"
+
+# Subscribe email to SNS (replace with actual email)
+read -p "Enter email for notifications: " EMAIL
+aws sns subscribe --topic-arn $TOPIC_ARN --protocol email --notification-endpoint $EMAIL
+
+# Get available service quotas with usage metrics
+echo "Getting service quotas with usage metrics..."
+QUOTAS=$(aws service-quotas list-service-quotas --service-code ec2 --query 'Quotas[?UsageMetric].{QuotaCode:QuotaCode,QuotaName:QuotaName,ServiceCode:ServiceCode}' --output json)
+
+# Create CloudWatch alarms for each quota
+echo "$QUOTAS" | jq -r '.[] | @base64' | while read quota; do
+    QUOTA_DATA=$(echo $quota | base64 --decode)
+    QUOTA_CODE=$(echo $QUOTA_DATA | jq -r '.QuotaCode')
+    QUOTA_NAME=$(echo $QUOTA_DATA | jq -r '.QuotaName')
+    SERVICE_CODE=$(echo $QUOTA_DATA | jq -r '.ServiceCode')
+    
+    ALARM_NAME="${ALARM_PREFIX}-${SERVICE_CODE}-${QUOTA_CODE}"
+    
+    aws cloudwatch put-metric-alarm \
+        --alarm-name "$ALARM_NAME" \
+        --alarm-description "Service quota utilization for $QUOTA_NAME" \
+        --metric-name "QuotaUtilization" \
+        --namespace "AWS/Usage" \
+        --statistic "Maximum" \
+        --period 300 \
+        --threshold $THRESHOLD \
+        --comparison-operator "GreaterThanThreshold" \
+        --evaluation-periods 1 \
+        --alarm-actions "$TOPIC_ARN" \
+        --dimensions Name=Service,Value=$SERVICE_CODE Name=Type,Value=Resource Name=Resource,Value=$QUOTA_CODE
+    
+    echo "Created alarm: $ALARM_NAME"
+done
+
+echo "Setup complete!"
